@@ -1,0 +1,172 @@
+name: Build custom WSL kernel port
+
+on:
+  workflow_dispatch:
+    inputs:
+      linux_track:
+        description: Linux release track
+        type: choice
+        options: [stable, mainline]
+        default: stable
+      linux_tag:
+        description: Optional Linux tag override, e.g. v7.1.1
+        required: false
+        type: string
+      wsl_tag:
+        description: Optional Microsoft WSL tag override, e.g. linux-msft-wsl-6.18.35.2
+        required: false
+        type: string
+      arch:
+        description: Target architecture
+        type: choice
+        options: [arm64, x64, all]
+        default: arm64
+      build_artifacts:
+        description: Build kernel image and module VHDX instead of source bundle only
+        type: boolean
+        default: false
+      force:
+        description: Recreate/reupload release even when the port tag already exists
+        type: boolean
+        default: false
+  schedule:
+    - cron: "12 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: custom-wsl-kernel-port-${{ github.event_name == 'workflow_dispatch' && inputs.arch || 'scheduled' }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@v4
+
+      - name: Resolve workflow options
+        id: options
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux_track="${{ github.event_name == 'workflow_dispatch' && inputs.linux_track || 'stable' }}"
+          linux_tag="${{ github.event_name == 'workflow_dispatch' && inputs.linux_tag || '' }}"
+          wsl_tag="${{ github.event_name == 'workflow_dispatch' && inputs.wsl_tag || '' }}"
+          arch="${{ github.event_name == 'workflow_dispatch' && inputs.arch || 'arm64' }}"
+          build_artifacts="${{ github.event_name == 'workflow_dispatch' && inputs.build_artifacts || 'false' }}"
+          force="${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}"
+
+          if [[ "$arch" == "all" ]]; then
+            arch_list="arm64 x64"
+          else
+            arch_list="$arch"
+          fi
+
+          {
+            echo "linux_track=$linux_track"
+            echo "linux_tag=$linux_tag"
+            echo "wsl_tag=$wsl_tag"
+            echo "arch_list=$arch_list"
+            echo "mode=$([[ "$build_artifacts" == "true" ]] && echo build || echo source)"
+            echo "build_artifacts=$build_artifacts"
+            echo "force=$force"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq git curl make gcc flex bison bc libssl-dev libelf-dev dwarves
+          if [[ "${{ steps.options.outputs.build_artifacts }}" == "true" ]]; then
+            sudo apt-get install -y qemu-utils e2fsprogs
+            if grep -qw arm64 <<<"${{ steps.options.outputs.arch_list }}"; then
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+            fi
+          fi
+
+      - name: Generate ports
+        id: generate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          created=()
+          skipped=()
+
+          for arch in ${{ steps.options.outputs.arch_list }}; do
+            resolve_dir="dist/resolve-$arch"
+            args=(
+              --mode resolve
+              --linux-track "${{ steps.options.outputs.linux_track }}"
+              --arch "$arch"
+              --output-dir "$resolve_dir"
+            )
+            if [[ -n "${{ steps.options.outputs.linux_tag }}" ]]; then
+              args+=(--linux-tag "${{ steps.options.outputs.linux_tag }}")
+            fi
+            if [[ -n "${{ steps.options.outputs.wsl_tag }}" ]]; then
+              args+=(--wsl-tag "${{ steps.options.outputs.wsl_tag }}")
+            fi
+            scripts/port-wsl-kernel.sh "${args[@]}"
+            port_tag="$(jq -r '.port.tag' "$resolve_dir/metadata.json")"
+
+            if gh release view "$port_tag" >/dev/null 2>&1; then
+              if [[ "${{ steps.options.outputs.force }}" == "true" ]]; then
+                gh release delete "$port_tag" --cleanup-tag --yes
+              else
+                echo "Skipping $port_tag; release already exists."
+                skipped+=("$port_tag")
+                continue
+              fi
+            fi
+
+            out_dir="dist/$arch"
+            args=(
+              --mode "${{ steps.options.outputs.mode }}"
+              --linux-track "${{ steps.options.outputs.linux_track }}"
+              --arch "$arch"
+              --output-dir "$out_dir"
+            )
+            if [[ -n "${{ steps.options.outputs.linux_tag }}" ]]; then
+              args+=(--linux-tag "${{ steps.options.outputs.linux_tag }}")
+            fi
+            if [[ -n "${{ steps.options.outputs.wsl_tag }}" ]]; then
+              args+=(--wsl-tag "${{ steps.options.outputs.wsl_tag }}")
+            fi
+            scripts/port-wsl-kernel.sh "${args[@]}"
+
+            port_tag="$(jq -r '.port.tag' "$out_dir/metadata.json")"
+            release_notes="$out_dir/release-notes.md"
+            gh release create "$port_tag" "$out_dir"/metadata.json "$out_dir"/release-notes.md "$out_dir"/patch-*.patch "$out_dir"/source-*.tar.gz \
+              --title "$port_tag" \
+              --notes-file "$release_notes" \
+              --target "$GITHUB_SHA" \
+              --latest=false
+
+            if [[ "${{ steps.options.outputs.build_artifacts }}" == "true" ]]; then
+              gh release upload "$port_tag" "$out_dir"/kernel-* "$out_dir"/modules-*.vhdx --clobber
+            fi
+            created+=("$port_tag")
+          done
+
+          {
+            echo "created=${created[*]}"
+            echo "skipped=${skipped[*]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## Custom WSL kernel port"
+            echo ""
+            echo "- Created: ${{ steps.generate.outputs.created }}"
+            echo "- Skipped: ${{ steps.generate.outputs.skipped }}"
+            echo "- Mode: ${{ steps.options.outputs.mode }}"
+            echo "- Architectures: ${{ steps.options.outputs.arch_list }}"
+          } >> "$GITHUB_STEP_SUMMARY"

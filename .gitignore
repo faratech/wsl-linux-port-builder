@@ -1,0 +1,7 @@
+work/
+out/
+*.log
+*.img
+*.vhdx
+*.bundle
+*.tmp
