@@ -80,11 +80,11 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y jq git curl make gcc flex bison bc libssl-dev libelf-dev dwarves
+          if grep -qw arm64 <<<"${{ steps.options.outputs.arch_list }}"; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
           if [[ "${{ steps.options.outputs.build_artifacts }}" == "true" ]]; then
             sudo apt-get install -y qemu-utils e2fsprogs
-            if grep -qw arm64 <<<"${{ steps.options.outputs.arch_list }}"; then
-              sudo apt-get install -y gcc-aarch64-linux-gnu
-            fi
           fi
 
       - name: Generate ports
