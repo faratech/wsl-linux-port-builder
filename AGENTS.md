@@ -9,6 +9,9 @@ fork mirrors.
   build/package logic.
 - `.github/workflows/build-custom-wsl-kernel.yml` runs scheduled and manual
   GitHub Actions jobs.
+- `client/` holds the consumer side: `update-custom-wsl-kernel.sh` (installs a
+  published port on a WSL host), `wsl-kernel-check.sh` (login update-check hook),
+  and `install.sh` (sets both up).
 - `docs/architecture.md` explains the upstream-fetch and merge flow.
 - `patches/README.md` is reserved for future compatibility patch queues.
 - Generated outputs belong in temporary or ignored output directories, such as

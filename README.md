@@ -10,6 +10,33 @@ requested upstream tags directly, applies Microsoft WSL changes on top of the Li
 base, applies the maintained compatibility rules in `scripts/port-wsl-kernel.sh`,
 and publishes build artifacts.
 
+## Install
+
+To consume the published ports on a WSL machine, use the client installer in
+`client/`. It places the updater on `PATH` and wires up a login-time update
+check (`/etc/profile.d/wsl-kernel-check.sh`).
+
+From a checkout:
+
+```bash
+sudo client/install.sh
+```
+
+Standalone (no clone):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/faratech/wsl-linux-port-builder/main/client/install.sh | sudo bash
+```
+
+Options: `--prefix DIR` (updater location, default `/usr/local/bin`),
+`--no-check` (skip the login hook), `--uninstall`. After installing, run an
+update any time with `update-custom-wsl-kernel.sh` (see `--help` for `--check`,
+`--status`, `--dry-run`, `--arch`, and source-mode flags).
+
+The login hook prefers the updater's own `--check`; if the updater is not
+installed it shows a generic notice comparing the running kernel to the latest
+stock Microsoft WSL release, and stays quiet on a custom-port kernel.
+
 ## Manual Usage
 
 Resolve the current targets without building:
