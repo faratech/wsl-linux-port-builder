@@ -973,7 +973,7 @@ update_parts=()
 if [[ "$MODE" == "check" ]]; then
     if [[ ${#update_parts[@]} -gt 0 ]]; then
         echo -e "${YELLOW}[WSL Kernel] Custom port update available: $(join_update_parts "${update_parts[@]}")${NC}"
-        echo -e "${YELLOW}  Run: bash /mnt/c/code/update-custom-wsl-kernel.sh${NC}"
+        echo -e "${YELLOW}  Run: bash $0${NC}"
     fi
     exit 0
 fi
