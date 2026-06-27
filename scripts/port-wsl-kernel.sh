@@ -496,8 +496,18 @@ SOURCE_TARBALL_ARTIFACT="source-$PORT_NAME.tar.gz"
 PATCH_ARTIFACT="patch-$PORT_NAME.patch"
 info "Writing source patch and tarball..."
 git -C "$REPO" diff --binary "$TARGET_LINUX_COMMIT" "$COMBINED_COMMIT" > "$OUTPUT_DIR/$PATCH_ARTIFACT"
-tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-    --exclude=.git -C "$WORKTREE" -czf "$OUTPUT_DIR/$SOURCE_TARBALL_ARTIFACT" .
+# Archive the committed tree, not the worktree. prepare_config() ran
+# "make olddefconfig" above, which compiles host tools (scripts/kconfig/conf,
+# scripts/basic/fixdep) for the BUILDER's architecture and drops generated
+# files (.config, *.o, include/config/, include/generated/, ...) into the
+# worktree. Those paths are .gitignore'd, so they are absent from
+# $COMBINED_COMMIT but a plain "tar -C $WORKTREE ." would sweep them in. That
+# shipped builder-arch host binaries inside the source tarball and broke
+# cross-arch consumers (e.g. on aarch64: "scripts/kconfig/conf: Syntax error:
+# \"(\" unexpected" when make exec'd the bundled x86-64 conf). git archive
+# emits only tracked source; --mtime keeps the tarball reproducible.
+git -C "$REPO" archive --format=tar.gz --mtime=@0 "$COMBINED_COMMIT" \
+    > "$OUTPUT_DIR/$SOURCE_TARBALL_ARTIFACT"
 
 if [[ "$MODE" == "build" ]]; then
     build_kernel_and_modules "$WORKTREE" "$OUTPUT_DIR"
