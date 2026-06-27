@@ -15,6 +15,13 @@ KERNEL_DEST="${CUSTOM_WSL_KERNEL_DEST:-$WIN_PROFILE/wsl-kernel}"
 WSLCONFIG="${CUSTOM_WSL_CONFIG:-$WIN_PROFILE/.wslconfig}"
 METADATA="${CUSTOM_WSL_METADATA:-$KERNEL_DEST/custom-wsl-kernel.json}"
 JOBS="${JOBS:-$(nproc)}"
+# Build scratch must live on disk. /tmp is frequently a small RAM-backed tmpfs
+# (e.g. WSL defaults to one sized at ~half of RAM), far too small for a full
+# kernel build + module staging + ext4 image + VHDX, and filling it can wedge
+# the whole system. Default to /var/tmp (disk on a normal WSL distro); override
+# with CUSTOM_WSL_WORKDIR. CUSTOM_WSL_MIN_FREE_GIB tunes the preflight check.
+WORKDIR_BASE="${CUSTOM_WSL_WORKDIR:-/var/tmp}"
+MIN_FREE_GIB="${CUSTOM_WSL_MIN_FREE_GIB:-15}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -114,6 +121,19 @@ require_commands() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         error "Missing required command(s): ${missing[*]}"
     fi
+}
+
+require_free_space() {
+    local dir="$1"
+    local need_gib="$2"
+    local avail_kib avail_gib
+    avail_kib="$(df -Pk "$dir" 2>/dev/null | awk 'NR==2 {print $4}')"
+    [[ -n "$avail_kib" ]] || return 0
+    avail_gib=$((avail_kib / 1024 / 1024))
+    if [[ "$avail_gib" -lt "$need_gib" ]]; then
+        error "Insufficient build space in $dir: ${avail_gib} GiB free, need ~${need_gib} GiB. Point CUSTOM_WSL_WORKDIR at a larger disk-backed directory (current base: $WORKDIR_BASE; note /tmp is often a small tmpfs)."
+    fi
+    info "Build scratch: $dir (${avail_gib} GiB free)"
 }
 
 kernel_base_version() {
@@ -1015,7 +1035,11 @@ if [[ "$YES" -ne 1 ]]; then
     [[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
 fi
 
-TMP_ROOT="$(mktemp -d /tmp/custom-wsl-kernel.XXXXXX)"
+mkdir -p "$WORKDIR_BASE"
+TMP_ROOT="$(mktemp -d "$WORKDIR_BASE/custom-wsl-kernel.XXXXXX")"
+if [[ "$BUILD" -eq 1 && "$SELECTED_PATH" != "github-binary" ]]; then
+    require_free_space "$TMP_ROOT" "$MIN_FREE_GIB"
+fi
 WORKTREE=""
 LOCAL_WORKTREE=0
 KERNEL_RELEASE=""
