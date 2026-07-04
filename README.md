@@ -75,6 +75,6 @@ Source mode writes:
 
 ## GitHub Actions
 
-`.github/workflows/build-custom-wsl-kernel.yml` runs every 6 hours and supports
-manual inputs for Linux track, tags, WSL release tag, architecture, and whether to
-build full artifacts.
+`.github/workflows/build-custom-wsl-kernel.yml` runs every 6 hours and generates
+both `arm64` and `x64` source releases by default. Manual runs can target one
+architecture or `all`, and can optionally build full kernel/module artifacts.

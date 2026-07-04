@@ -20,7 +20,7 @@ on:
         description: Target architecture
         type: choice
         options: [arm64, x64, all]
-        default: arm64
+        default: all
       build_artifacts:
         description: Build kernel image and module VHDX instead of source bundle only
         type: boolean
@@ -54,7 +54,7 @@ jobs:
           linux_track="${{ github.event_name == 'workflow_dispatch' && inputs.linux_track || 'stable' }}"
           linux_tag="${{ github.event_name == 'workflow_dispatch' && inputs.linux_tag || '' }}"
           wsl_tag="${{ github.event_name == 'workflow_dispatch' && inputs.wsl_tag || '' }}"
-          arch="${{ github.event_name == 'workflow_dispatch' && inputs.arch || 'arm64' }}"
+          arch="${{ github.event_name == 'workflow_dispatch' && inputs.arch || 'all' }}"
           build_artifacts="${{ github.event_name == 'workflow_dispatch' && inputs.build_artifacts || 'false' }}"
           force="${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}"
 

@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="${CUSTOM_WSL_REPO:-/root/wsl-kernel-port-7.1.1/linux}"
-LINUX_UPSTREAM_REMOTE="${LINUX_UPSTREAM_REMOTE:-stable}"
-LINUX_FORK_REMOTE="${LINUX_FORK_REMOTE:-linux-fork}"
-MSFT_REMOTE="${MSFT_REMOTE:-microsoft}"
-WSL_FORK_REMOTE="${WSL_FORK_REMOTE:-fork}"
-BUILDER_REPO="${CUSTOM_WSL_BUILDER_REPO:-faratech/wsl-linux-port-builder}"
-BUILDER_API="${CUSTOM_WSL_BUILDER_API:-https://api.github.com/repos/$BUILDER_REPO}"
-KERNEL_ORG_RELEASES="${KERNEL_ORG_RELEASES:-https://www.kernel.org/releases.json}"
-MSFT_RELEASES_API="${MSFT_RELEASES_API:-https://api.github.com/repos/microsoft/WSL2-Linux-Kernel/releases}"
-WIN_PROFILE="$(wslpath "$(cmd.exe /C 'echo %USERPROFILE%' < /dev/null 2>/dev/null | tr -d '\r')")"
-KERNEL_DEST="${CUSTOM_WSL_KERNEL_DEST:-$WIN_PROFILE/wsl-kernel}"
-WSLCONFIG="${CUSTOM_WSL_CONFIG:-$WIN_PROFILE/.wslconfig}"
-METADATA="${CUSTOM_WSL_METADATA:-$KERNEL_DEST/custom-wsl-kernel.json}"
-JOBS="${JOBS:-$(nproc)}"
 # Build scratch must live on disk. /tmp is frequently a small RAM-backed tmpfs
 # (e.g. WSL defaults to one sized at ~half of RAM), far too small for a full
 # kernel build + module staging + ext4 image + VHDX, and filling it can wedge
@@ -22,6 +8,26 @@ JOBS="${JOBS:-$(nproc)}"
 # with CUSTOM_WSL_WORKDIR. CUSTOM_WSL_MIN_FREE_GIB tunes the preflight check.
 WORKDIR_BASE="${CUSTOM_WSL_WORKDIR:-/var/tmp}"
 MIN_FREE_GIB="${CUSTOM_WSL_MIN_FREE_GIB:-15}"
+REPO_DIR="${CUSTOM_WSL_REPO:-$WORKDIR_BASE/custom-wsl-source-cache/linux}"
+LINUX_UPSTREAM_REMOTE="${LINUX_UPSTREAM_REMOTE:-stable}"
+LINUX_FORK_REMOTE="${LINUX_FORK_REMOTE:-linux-fork}"
+MSFT_REMOTE="${MSFT_REMOTE:-microsoft}"
+WSL_FORK_REMOTE="${WSL_FORK_REMOTE:-fork}"
+LINUX_UPSTREAM_URL="${LINUX_UPSTREAM_URL:-https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git}"
+MSFT_REPO_URL="${MSFT_REPO_URL:-https://github.com/microsoft/WSL2-Linux-Kernel.git}"
+LINUX_FORK_URL="${LINUX_FORK_URL:-https://github.com/faratech/linux.git}"
+WSL_FORK_URL="${WSL_FORK_URL:-https://github.com/faratech/WSL2-Linux-Kernel.git}"
+BUILDER_REPO="${CUSTOM_WSL_BUILDER_REPO:-faratech/wsl-linux-port-builder}"
+BUILDER_API="${CUSTOM_WSL_BUILDER_API:-https://api.github.com/repos/$BUILDER_REPO}"
+BUILDER_GIT_URL="${CUSTOM_WSL_BUILDER_GIT_URL:-https://github.com/$BUILDER_REPO.git}"
+BUILDER_DIR="${CUSTOM_WSL_BUILDER_DIR:-$WORKDIR_BASE/wsl-linux-port-builder}"
+KERNEL_ORG_RELEASES="${KERNEL_ORG_RELEASES:-https://www.kernel.org/releases.json}"
+MSFT_RELEASES_API="${MSFT_RELEASES_API:-https://api.github.com/repos/microsoft/WSL2-Linux-Kernel/releases}"
+WIN_PROFILE="$(wslpath "$(cmd.exe /C 'echo %USERPROFILE%' < /dev/null 2>/dev/null | tr -d '\r')")"
+KERNEL_DEST="${CUSTOM_WSL_KERNEL_DEST:-$WIN_PROFILE/wsl-kernel}"
+WSLCONFIG="${CUSTOM_WSL_CONFIG:-$WIN_PROFILE/.wslconfig}"
+METADATA="${CUSTOM_WSL_METADATA:-$KERNEL_DEST/custom-wsl-kernel.json}"
+JOBS="${JOBS:-$(nproc)}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -70,7 +76,7 @@ Checks or rebuilds the custom WSL kernel from two independent inputs:
   2. latest Microsoft WSL kernel release tag
 
 By default, update installs prefer releases from faratech/wsl-linux-port-builder
-and fall back to local direct upstream builds from kernel.org/Microsoft sources.
+and fall back to a local clone of that public builder repository.
 
 Options:
   --check             Print only an update notice when either input is newer.
@@ -81,7 +87,7 @@ Options:
   --linux-tag TAG     Override the target Linux tag, e.g. v7.1.2.
   --wsl-tag TAG       Override the target WSL tag, e.g. linux-msft-wsl-6.18.35.3.
   --arch ARCH         Override build arch: arm64/aarch64 or x64/x86_64/amd64.
-  --source MODE       auto, github, or local. Default: auto.
+  --source MODE       auto, github, or local. local means local builder repo.
   --skip-build        Regenerate and push the combined branch only.
   --no-install        Build but do not copy artifacts or update .wslconfig.
   --use-fork-cache    Prefer old fork remotes as optional fetch caches.
@@ -359,7 +365,7 @@ release_metadata_value() {
 selected_update_path() {
     case "$SOURCE_MODE" in
         local)
-            printf 'local'
+            printf 'local-builder'
             ;;
         github)
             [[ "$GH_RELEASE_AVAILABLE" -eq 1 ]] || error "Required GitHub release is missing: $RELEASE_TAG"
@@ -377,7 +383,7 @@ selected_update_path() {
             elif [[ "$GH_SOURCE_AVAILABLE" -eq 1 ]]; then
                 printf 'github-source'
             else
-                printf 'local'
+                printf 'local-builder'
             fi
             ;;
         *)
@@ -851,6 +857,84 @@ build_github_source_release() {
     fi
 }
 
+ensure_builder_repo() {
+    if [[ -d "$BUILDER_DIR/.git" ]]; then
+        info "Updating local builder repo: $BUILDER_DIR"
+        git -C "$BUILDER_DIR" fetch --prune origin
+        git -C "$BUILDER_DIR" checkout -q main
+        git -C "$BUILDER_DIR" pull --ff-only origin main
+        return 0
+    fi
+
+    if [[ -e "$BUILDER_DIR" ]]; then
+        error "Builder path exists but is not a git repo: $BUILDER_DIR"
+    fi
+
+    info "Cloning builder repo: $BUILDER_GIT_URL -> $BUILDER_DIR"
+    mkdir -p "$(dirname "$BUILDER_DIR")"
+    git clone --depth=1 "$BUILDER_GIT_URL" "$BUILDER_DIR"
+}
+
+run_builder_update() {
+    local builder_mode="source"
+    local output_dir="$TMP_ROOT/builder-output"
+    local builder_work="$TMP_ROOT/builder-work"
+    local output_metadata="$output_dir/metadata.json"
+    local kernel_asset=""
+    local modules_asset=""
+    local source_branch=""
+    local source_commit=""
+
+    ensure_builder_repo
+    [[ -x "$BUILDER_DIR/scripts/port-wsl-kernel.sh" ]] || error "Builder script is missing or not executable: $BUILDER_DIR/scripts/port-wsl-kernel.sh"
+
+    if [[ "$BUILD" -eq 1 ]]; then
+        builder_mode="build"
+    fi
+
+    info "Running builder repo locally in $builder_mode mode..."
+    "$BUILDER_DIR/scripts/port-wsl-kernel.sh" \
+        --mode "$builder_mode" \
+        --linux-track stable \
+        --linux-tag "$TARGET_LINUX_TAG" \
+        --wsl-tag "$TARGET_WSL_TAG" \
+        --arch "$ARTIFACT_ARCH" \
+        --output-dir "$output_dir" \
+        --work-dir "$builder_work" \
+        --jobs "$JOBS"
+
+    [[ -f "$output_metadata" ]] || error "Builder did not write metadata: $output_metadata"
+
+    if [[ "$BUILD" -ne 1 ]]; then
+        info "Builder source generation completed; build/install was skipped."
+        return 0
+    fi
+
+    if [[ "$INSTALL" -ne 1 ]]; then
+        info "Builder build completed; install was skipped."
+        return 0
+    fi
+
+    kernel_asset="$(release_metadata_value "$output_metadata" '.artifacts.kernel')"
+    modules_asset="$(release_metadata_value "$output_metadata" '.artifacts.modules_vhdx')"
+    KERNEL_RELEASE="$(release_metadata_value "$output_metadata" '.artifacts.kernel_release')"
+    source_branch="$(release_metadata_value "$output_metadata" '.port.source_branch')"
+    source_commit="$(release_metadata_value "$output_metadata" '.port.commit')"
+
+    [[ -n "$kernel_asset" && -f "$output_dir/$kernel_asset" ]] || error "Builder kernel artifact is missing"
+    [[ -n "$modules_asset" && -f "$output_dir/$modules_asset" ]] || error "Builder module VHDX artifact is missing"
+
+    install_downloaded_artifacts "$output_dir/$kernel_asset" "$output_dir/$modules_asset" "$kernel_asset" "$modules_asset"
+    write_metadata \
+        "$METADATA" \
+        "$TARGET_LINUX_VERSION" "$TARGET_LINUX_TAG" \
+        "$TARGET_WSL_VERSION" "$TARGET_WSL_TAG" "$TARGET_WSL_BASE_LINUX_TAG" \
+        "$source_branch" "$source_commit" "$KERNEL_RELEASE" \
+        "$INSTALLED_KERNEL_PATH" "$INSTALLED_MODULES_PATH"
+    info "Wrote metadata: $METADATA"
+    warn "Activation still requires: wsl.exe --shutdown"
+}
+
 run_local_update() {
     [[ -d "$REPO_DIR/.git" || -f "$REPO_DIR/.git" ]] || error "Repo not found at $REPO_DIR"
     remote_exists "$LINUX_UPSTREAM_REMOTE" || error "Missing Linux upstream remote: $LINUX_UPSTREAM_REMOTE"
@@ -1068,8 +1152,8 @@ case "$SELECTED_PATH" in
     github-source)
         build_github_source_release "$TMP_ROOT"
         ;;
-    local)
-        run_local_update
+    local-builder)
+        run_builder_update
         ;;
     *)
         error "Internal error: unsupported selected update path '$SELECTED_PATH'"
