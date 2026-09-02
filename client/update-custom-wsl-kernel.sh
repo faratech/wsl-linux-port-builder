@@ -858,7 +858,15 @@ build_github_source_release() {
 }
 
 ensure_builder_repo() {
-    if [[ -d "$BUILDER_DIR/.git" ]]; then
+    local corrupt_cache
+
+    # A prior interrupted clone or external cleanup can leave a .git directory
+    # without the metadata required for Git to recognize the worktree. Checking
+    # only for $BUILDER_DIR/.git makes the subsequent fetch fail with the vague
+    # "not a git repository" error. Require both a real worktree and origin.
+    if [[ -d "$BUILDER_DIR" ]] \
+        && [[ "$(git -C "$BUILDER_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]] \
+        && git -C "$BUILDER_DIR" remote get-url origin >/dev/null 2>&1; then
         info "Updating local builder repo: $BUILDER_DIR"
         git -C "$BUILDER_DIR" fetch --prune origin
         git -C "$BUILDER_DIR" checkout -q main
@@ -866,8 +874,13 @@ ensure_builder_repo() {
         return 0
     fi
 
-    if [[ -e "$BUILDER_DIR" ]]; then
-        error "Builder path exists but is not a git repo: $BUILDER_DIR"
+    # Treat this path as a disposable cache, but preserve an invalid entry for
+    # inspection instead of deleting it. -L also catches a dangling symlink,
+    # for which -e alone is false and git clone would otherwise fail.
+    if [[ -e "$BUILDER_DIR" || -L "$BUILDER_DIR" ]]; then
+        corrupt_cache="${BUILDER_DIR}.corrupt-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+        warn "Builder cache is invalid; preserving it at $corrupt_cache and cloning a fresh checkout."
+        mv -- "$BUILDER_DIR" "$corrupt_cache"
     fi
 
     info "Cloning builder repo: $BUILDER_GIT_URL -> $BUILDER_DIR"
