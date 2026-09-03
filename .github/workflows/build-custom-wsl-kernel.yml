@@ -30,7 +30,9 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "12 */6 * * *"
+    # Daily check for new upstream tags — the 6-hour cadence just re-uploaded
+    # the same release four times a day.
+    - cron: "12 3 * * *"
 
 permissions:
   contents: write
@@ -42,6 +44,7 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - name: Checkout builder
         uses: actions/checkout@v4
