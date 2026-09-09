@@ -46,7 +46,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check-upstream:
+    name: Check for a new upstream port
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@v4
+
+      - name: Resolve current upstream ports
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          changed=false
+          for arch in arm64 x64; do
+            out="$RUNNER_TEMP/resolve-$arch"
+            scripts/port-wsl-kernel.sh \
+              --mode resolve \
+              --linux-track stable \
+              --arch "$arch" \
+              --output-dir "$out"
+            port_tag="$(jq -r '.port.tag' "$out/metadata.json")"
+            if ! gh release view "$port_tag" >/dev/null 2>&1; then
+              changed=true
+            fi
+          done
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
   generate:
+    needs: check-upstream
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.check-upstream.outputs.changed == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:

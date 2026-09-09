@@ -1,0 +1,3 @@
+version: 1
+workflows:
+  .github/workflows/build-custom-wsl-kernel.yml: deep
