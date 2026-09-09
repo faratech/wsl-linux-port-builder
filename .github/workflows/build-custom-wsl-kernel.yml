@@ -41,7 +41,9 @@ permissions:
 
 concurrency:
   group: custom-wsl-kernel-port-${{ github.event_name == 'workflow_dispatch' && inputs.arch || 'scheduled' }}
-  cancel-in-progress: false
+  # Generation is idempotent: an interrupted run is safe to supersede because
+  # the next run skips releases that already exist.
+  cancel-in-progress: true
 
 jobs:
   generate:
