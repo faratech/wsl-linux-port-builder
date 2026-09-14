@@ -284,8 +284,18 @@ apply_known_compatibility_patches() {
     local work="$1"
     local dxgsync="$work/drivers/hv/dxgkrnl/dxgsyncfile.c"
     local mshyperv="$work/arch/x86/kernel/cpu/mshyperv.c"
+    local swiotlb="$work/kernel/dma/swiotlb.c"
 
     ensure_dxg_entries "$work"
+
+    # Linux >= 7.2.6 added a vaddr argument to swiotlb_init_io_tlb_pool();
+    # the MSFT swiotlb_create_pool() hunk still uses the old 5-arg form.
+    if [[ -f "$swiotlb" ]] \
+        && grep -q 'void \*vaddr, unsigned long nslabs, bool late_alloc' "$swiotlb" \
+        && grep -q 'swiotlb_init_io_tlb_pool(pool, base, nslabs, false, nareas);' "$swiotlb"; then
+        info "Applying known swiotlb_create_pool vaddr compatibility fix..."
+        perl -i -pe 's/swiotlb_init_io_tlb_pool\(pool, base, nslabs, false, nareas\);/swiotlb_init_io_tlb_pool(pool, base, phys_to_virt(base), nslabs, false,\n\t\t\t\t nareas);/' "$swiotlb"
+    fi
 
     if [[ -f "$dxgsync" ]] && grep -q '__dma_fence_is_later(syncpoint->fence_value' "$dxgsync"; then
         info "Applying known dxgkrnl dma_fence compatibility fix..."
