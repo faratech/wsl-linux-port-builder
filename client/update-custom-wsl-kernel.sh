@@ -729,24 +729,8 @@ build_kernel_and_modules() {
 install_artifacts() {
     local work="$1"
     local artifact_id="$2"
-    local kernel_file="$KERNEL_DEST/kernel-$artifact_id"
-    local modules_file="$KERNEL_DEST/modules-$artifact_id.vhdx"
-
-    mkdir -p "$KERNEL_DEST"
-    cp "$work/$IMAGE_PATH" "$kernel_file"
-    cp "$MODULES_VHDX_TMP" "$modules_file"
-
-    local kernel_win
-    local modules_win
-    kernel_win="$(wslpath -w "$kernel_file" | tr '\\' '/')"
-    modules_win="$(wslpath -w "$modules_file" | tr '\\' '/')"
-    update_wslconfig "$kernel_win" "$modules_win"
-
-    INSTALLED_KERNEL_PATH="$kernel_file"
-    INSTALLED_MODULES_PATH="$modules_file"
-    info "Installed kernel: $kernel_file"
-    info "Installed module VHDX: $modules_file"
-    info "Updated $WSLCONFIG"
+    install_downloaded_artifacts "$work/$IMAGE_PATH" "$MODULES_VHDX_TMP" \
+        "kernel-$artifact_id" "modules-$artifact_id.vhdx"
 }
 
 install_downloaded_artifacts() {
@@ -754,10 +738,20 @@ install_downloaded_artifacts() {
     local modules_src="$2"
     local kernel_name="$3"
     local modules_name="$4"
+    local install_dir
 
+    [[ -s "$kernel_src" && -s "$modules_src" ]] || error "Kernel or module VHDX artifact is missing or empty"
+    [[ "$kernel_name" == "$(basename -- "$kernel_name")" && "$modules_name" == "$(basename -- "$modules_name")" ]] || error "Artifact names must be basenames"
+
+    # WSL can hold the active kernel and module VHDX open on Windows. The
+    # kernel release also stays the same when only the Microsoft base changes.
+    # Always reserve a fresh directory, including for forced/repeated installs,
+    # and switch the config only after both copies succeed. Keep old installs
+    # intact for the running VM and rollback.
     mkdir -p "$KERNEL_DEST"
-    INSTALLED_KERNEL_PATH="$KERNEL_DEST/$kernel_name"
-    INSTALLED_MODULES_PATH="$KERNEL_DEST/$modules_name"
+    install_dir="$(mktemp -d "$KERNEL_DEST/install-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
+    INSTALLED_KERNEL_PATH="$install_dir/$kernel_name"
+    INSTALLED_MODULES_PATH="$install_dir/$modules_name"
     cp "$kernel_src" "$INSTALLED_KERNEL_PATH"
     cp "$modules_src" "$INSTALLED_MODULES_PATH"
 

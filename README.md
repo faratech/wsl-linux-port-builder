@@ -68,6 +68,19 @@ Options: `--prefix DIR` (updater location, default `/usr/local/bin`),
 update any time with `update-custom-wsl-kernel.sh` (see `--help` for `--check`,
 `--status`, `--dry-run`, `--arch`, and source-mode flags).
 
+Each installation copies the kernel and module VHDX into a fresh
+`wsl-kernel/install-<timestamp>.<random>/` directory before updating `.wslconfig`.
+This avoids overwriting files held open by the running WSL VM, including when
+only the Microsoft base changes or the same release is rebuilt. Old artifacts
+are retained for rollback; they are not automatically deleted. Restart WSL from
+Windows with `wsl --shutdown` to activate the new pair.
+
+Run the installer regression checks without building a kernel:
+
+```bash
+python3 tests/test-artifact-install.py
+```
+
 The login hook prefers the updater's own `--check`; if the updater is not
 installed it shows a generic notice comparing the running kernel to the latest
 stock Microsoft WSL release, and stays quiet on a custom-port kernel.
