@@ -285,8 +285,18 @@ apply_known_compatibility_patches() {
     local dxgsync="$work/drivers/hv/dxgkrnl/dxgsyncfile.c"
     local mshyperv="$work/arch/x86/kernel/cpu/mshyperv.c"
     local swiotlb="$work/kernel/dma/swiotlb.c"
+    local tools_types="$work/tools/include/linux/types.h"
 
     ensure_dxg_entries "$work"
+
+    # linux-libc-dev >= 7.3 arm64 asm/sigcontext.h and asm/ptrace.h use
+    # __u128, but tools/include/linux/types.h shadows the system
+    # linux/types.h and lacks it, breaking libbpf/libsubcmd for resolve_btfids.
+    if [[ -f "$tools_types" ]] && ! grep -q '__u128' "$tools_types"; then
+        info "Applying known tools __u128 compatibility fix..."
+        perl -i -0pe 's/(#include <asm\/posix_types\.h>\n)/$1\n#ifdef __SIZEOF_INT128__\ntypedef __signed__ __int128 __s128 __attribute__((aligned(16)));\ntypedef unsigned __int128 __u128 __attribute__((aligned(16)));\n#endif\n/' "$tools_types"
+        grep -q '__u128' "$tools_types" || die "Failed to add __u128 to $tools_types"
+    fi
 
     # Linux >= 7.2.6 added a vaddr argument to swiotlb_init_io_tlb_pool();
     # the MSFT swiotlb_create_pool() hunk still uses the old 5-arg form.
