@@ -23,10 +23,38 @@ BUILDER_GIT_URL="${CUSTOM_WSL_BUILDER_GIT_URL:-https://github.com/$BUILDER_REPO.
 BUILDER_DIR="${CUSTOM_WSL_BUILDER_DIR:-$WORKDIR_BASE/wsl-linux-port-builder}"
 KERNEL_ORG_RELEASES="${KERNEL_ORG_RELEASES:-https://www.kernel.org/releases.json}"
 MSFT_RELEASES_API="${MSFT_RELEASES_API:-https://api.github.com/repos/microsoft/WSL2-Linux-Kernel/releases}"
-WIN_PROFILE="$(wslpath "$(cmd.exe /C 'echo %USERPROFILE%' < /dev/null 2>/dev/null | tr -d '\r')")"
-KERNEL_DEST="${CUSTOM_WSL_KERNEL_DEST:-$WIN_PROFILE/wsl-kernel}"
-WSLCONFIG="${CUSTOM_WSL_CONFIG:-$WIN_PROFILE/.wslconfig}"
-METADATA="${CUSTOM_WSL_METADATA:-$KERNEL_DEST/custom-wsl-kernel.json}"
+resolve_win_profile() {
+    local cmd_bin="cmd.exe"
+    if ! command -v "$cmd_bin" >/dev/null 2>&1; then
+        for candidate in /mnt/c/Windows/System32/cmd.exe /Windows/System32/cmd.exe; do
+            if [[ -x "$candidate" ]]; then
+                cmd_bin="$candidate"
+                break
+            fi
+        done
+    fi
+
+    local raw=""
+    if command -v "$cmd_bin" >/dev/null 2>&1 || [[ -x "$cmd_bin" ]]; then
+        raw="$("$cmd_bin" /C 'echo %USERPROFILE%' < /dev/null 2>/dev/null | tr -d '\r' | tail -n 1)"
+    fi
+
+    if [[ -n "$raw" && "$raw" != "%USERPROFILE%" ]]; then
+        wslpath "$raw" 2>/dev/null || true
+        return 0
+    fi
+
+    for user_dir in /mnt/c/Users/*; do
+        if [[ -f "$user_dir/wsl-kernel/custom-wsl-kernel.json" || -f "$user_dir/.wslconfig" ]]; then
+            printf '%s\n' "$user_dir"
+            return 0
+        fi
+    done
+}
+WIN_PROFILE="$(resolve_win_profile)"
+KERNEL_DEST="${CUSTOM_WSL_KERNEL_DEST:-${WIN_PROFILE:+$WIN_PROFILE/wsl-kernel}}"
+WSLCONFIG="${CUSTOM_WSL_CONFIG:-${WIN_PROFILE:+$WIN_PROFILE/.wslconfig}}"
+METADATA="${CUSTOM_WSL_METADATA:-${KERNEL_DEST:+$KERNEL_DEST/custom-wsl-kernel.json}}"
 JOBS="${JOBS:-$(nproc)}"
 
 RED='\033[0;31m'
@@ -203,7 +231,7 @@ wsl_base_linux_tag() {
 
 metadata_get() {
     local expr="$1"
-    [[ -f "$METADATA" ]] || return 0
+    [[ -n "$METADATA" && -f "$METADATA" ]] || return 0
     jq -r "$expr // empty" "$METADATA" 2>/dev/null || true
 }
 
@@ -758,6 +786,7 @@ install_downloaded_artifacts() {
     # Always reserve a fresh directory, including for forced/repeated installs,
     # and switch the config only after both copies succeed. Keep old installs
     # intact for the running VM and rollback.
+    [[ -n "$KERNEL_DEST" ]] || error "Could not determine Windows kernel destination; set CUSTOM_WSL_KERNEL_DEST or ensure Windows profile is accessible."
     mkdir -p "$KERNEL_DEST"
     install_dir="$(mktemp -d "$KERNEL_DEST/install-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
     INSTALLED_KERNEL_PATH="$install_dir/$kernel_name"
