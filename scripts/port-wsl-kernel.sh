@@ -77,7 +77,7 @@ require_commands() {
 }
 
 tag_version() {
-    printf '%s\n' "$1" | sed -E 's/^v//; s/^linux-msft-wsl-//'
+    printf '%s\n' "$1" | sed -E 's/^v//; s/^linux-msft-wsl-//; s/^([0-9]+\.[0-9]+)\.0$/\1/'
 }
 
 wsl_base_linux_tag() {
@@ -91,9 +91,19 @@ latest_linux_version() {
         return
     fi
 
-    curl -fsSL "$KERNEL_ORG_RELEASES" \
-        | jq -er --arg track "$LINUX_TRACK" \
-            'first(.releases[] | select(.moniker == $track and (.iseol == false)) | .version)'
+    local ver
+    if [[ "$LINUX_TRACK" == "stable" ]]; then
+        ver="$(curl -fsSL "$KERNEL_ORG_RELEASES" \
+            | jq -r '[.latest_stable.version, (.releases[]? | select(.moniker == "stable" and (.iseol == false)) | .version)] | map(select(. != null and . != ""))[]' \
+            | sort -V \
+            | tail -n1)"
+    else
+        ver="$(curl -fsSL "$KERNEL_ORG_RELEASES" \
+            | jq -er --arg track "$LINUX_TRACK" \
+                'first(.releases[] | select(.moniker == $track and (.iseol == false)) | .version)')"
+    fi
+    [[ -n "$ver" ]] || die "Could not determine latest Linux version for track '$LINUX_TRACK' from $KERNEL_ORG_RELEASES"
+    printf '%s\n' "$ver"
 }
 
 latest_wsl_version() {
@@ -418,6 +428,7 @@ normalize_arch "$ARCH_INPUT"
 TARGET_LINUX_VERSION="$(latest_linux_version)"
 TARGET_WSL_VERSION="$(latest_wsl_version)"
 TARGET_LINUX_TAG="${LINUX_TAG:-v$TARGET_LINUX_VERSION}"
+TARGET_LINUX_TAG="$(printf '%s\n' "$TARGET_LINUX_TAG" | sed -E 's/^v?([0-9]+\.[0-9]+)\.0$/v\1/')"
 TARGET_WSL_TAG="${WSL_TAG:-linux-msft-wsl-$TARGET_WSL_VERSION}"
 TARGET_WSL_BASE_LINUX_TAG="$(wsl_base_linux_tag "$TARGET_WSL_VERSION")"
 PORT_NAME="linux-$TARGET_LINUX_VERSION-msft-wsl-$TARGET_WSL_VERSION-$ARTIFACT_ARCH"

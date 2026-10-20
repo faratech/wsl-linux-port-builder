@@ -171,11 +171,14 @@ require_free_space() {
 }
 
 kernel_base_version() {
-    printf '%s\n' "$1" | sed -E 's/^[^0-9]*//; s/[^0-9.].*$//; s/[.]+$//'
+    printf '%s\n' "$1" | sed -E 's/^[^0-9]*//; s/[^0-9.].*$//; s/[.]+$//; s/^([0-9]+\.[0-9]+)\.0$/\1/'
 }
 
 version_gt() {
-    [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]
+    local v1 v2
+    v1="$(printf '%s\n' "$1" | sed -E 's/^([0-9]+\.[0-9]+)\.0$/\1/')"
+    v2="$(printf '%s\n' "$2" | sed -E 's/^([0-9]+\.[0-9]+)\.0$/\1/')"
+    [[ "$v1" != "$v2" ]] && [[ "$(printf '%s\n%s\n' "$v1" "$v2" | sort -V | tail -n1)" == "$v1" ]]
 }
 
 normalize_arch() {
@@ -221,7 +224,7 @@ join_update_parts() {
 }
 
 tag_version() {
-    printf '%s\n' "$1" | sed -E 's/^v//; s/^linux-msft-wsl-//'
+    printf '%s\n' "$1" | sed -E 's/^v//; s/^linux-msft-wsl-//; s/^([0-9]+\.[0-9]+)\.0$/\1/'
 }
 
 wsl_base_linux_tag() {
@@ -240,8 +243,13 @@ latest_linux_stable_version() {
         tag_version "$LINUX_TAG_OVERRIDE"
         return
     fi
-    curl -sf --max-time 10 "$KERNEL_ORG_RELEASES" \
-        | jq -er 'first(.releases[] | select(.moniker == "stable" and (.iseol == false)) | .version)'
+    local ver
+    ver="$(curl -sf --max-time 10 "$KERNEL_ORG_RELEASES" \
+        | jq -r '[.latest_stable.version, (.releases[]? | select(.moniker == "stable" and (.iseol == false)) | .version)] | map(select(. != null and . != ""))[]' \
+        | sort -V \
+        | tail -n1)"
+    [[ -n "$ver" ]] || error "Could not determine latest Linux stable version from $KERNEL_ORG_RELEASES"
+    printf '%s\n' "$ver"
 }
 
 latest_wsl_version() {
@@ -1114,6 +1122,7 @@ LATEST_WSL_VERSION="$(latest_wsl_version)"
 TARGET_LINUX_VERSION="$LATEST_LINUX_VERSION"
 TARGET_WSL_VERSION="$LATEST_WSL_VERSION"
 TARGET_LINUX_TAG="${LINUX_TAG_OVERRIDE:-v$TARGET_LINUX_VERSION}"
+TARGET_LINUX_TAG="$(printf '%s\n' "$TARGET_LINUX_TAG" | sed -E 's/^v?([0-9]+\.[0-9]+)\.0$/v\1/')"
 TARGET_WSL_TAG="${WSL_TAG_OVERRIDE:-linux-msft-wsl-$TARGET_WSL_VERSION}"
 TARGET_WSL_BASE_LINUX_TAG="$(wsl_base_linux_tag "$TARGET_WSL_VERSION")"
 normalize_arch "${ARCH_OVERRIDE:-$HOST_UNAME_ARCH}"

@@ -24,10 +24,13 @@
     esac
 
     kernel_base_version() {
-        printf '%s\n' "$1" | sed -E 's/^[^0-9]*//; s/[^0-9.].*$//; s/[.]+$//'
+        printf '%s\n' "$1" | sed -E 's/^[^0-9]*//; s/[^0-9.].*$//; s/[.]+$//; s/^([0-9]+\.[0-9]+)\.0$/\1/'
     }
     version_gt() {
-        [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
+        local v1 v2
+        v1="$(printf '%s\n' "$1" | sed -E 's/^([0-9]+\.[0-9]+)\.0$/\1/')"
+        v2="$(printf '%s\n' "$2" | sed -E 's/^([0-9]+\.[0-9]+)\.0$/\1/')"
+        [ "$v1" != "$v2" ] && [ "$(printf '%s\n%s\n' "$v1" "$v2" | sort -V | tail -n1)" = "$v1" ]
     }
 
     CURRENT="$(kernel_base_version "$(uname -r)")"
