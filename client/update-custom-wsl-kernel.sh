@@ -620,14 +620,85 @@ if makefile.exists():
 PY
 }
 
+# Resolve conflict hunks where both sides added the same lines and one side
+# added more: take the longer side when the shorter one is its prefix or
+# suffix. Refuses any other hunk, including one side deleting lines the other
+# side changed, and leaves diff3 markers in place for manual inspection.
+resolve_superset_conflicts() {
+    local work="$1"
+    shift
+    # diff3 markers expose the merge base, which tells add/add hunks apart
+    # from delete/modify ones.
+    git -C "$work" checkout --conflict=diff3 -- "$@" || return 1
+    python3 - "$work" "$@" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+status = 0
+
+def subsumes(longer, shorter):
+    n = len(shorter)
+    return longer[:n] == shorter or (n > 0 and longer[-n:] == shorter)
+
+for name in sys.argv[2:]:
+    path = root / name
+    lines = path.read_text().splitlines(keepends=True)
+    out = []
+    unresolved = 0
+    i = 0
+    while i < len(lines):
+        if not lines[i].startswith("<<<<<<< "):
+            out.append(lines[i])
+            i += 1
+            continue
+        start = i + 1
+        hunk = {"ours": [], "base": [], "theirs": []}
+        side = "ours"
+        i += 1
+        while i < len(lines) and not lines[i].startswith(">>>>>>> "):
+            if lines[i].startswith("||||||| "):
+                side = "base"
+            elif lines[i].rstrip("\n") == "=======":
+                side = "theirs"
+            else:
+                hunk[side].append(lines[i])
+            i += 1
+        i += 1
+        ours, base, theirs = hunk["ours"], hunk["base"], hunk["theirs"]
+        longer, shorter = (theirs, ours) if len(theirs) >= len(ours) else (ours, theirs)
+        if (shorter or not base) and subsumes(longer, shorter):
+            out.extend(longer)
+        else:
+            print(f"{name}:{start}: conflict hunk is not a superset of both sides", file=sys.stderr)
+            unresolved += 1
+    if unresolved:
+        status = 1
+    else:
+        path.write_text("".join(out))
+
+sys.exit(status)
+PY
+}
+
 resolve_known_conflicts() {
     local work="$1"
+    local -a take_ours=() take_superset=()
     mapfile -t conflicts < <(git -C "$work" diff --name-only --diff-filter=U | sort)
     [[ ${#conflicts[@]} -gt 0 ]] || return 0
 
     for file in "${conflicts[@]}"; do
         case "$file" in
-            Makefile|arch/x86/kernel/cpu/mshyperv.c|drivers/hv/Kconfig|drivers/hv/Makefile) ;;
+            Makefile|arch/x86/kernel/cpu/mshyperv.c|drivers/hv/Kconfig|drivers/hv/Makefile)
+                take_ours+=("$file")
+                ;;
+            # Linux >= 7.3 and Microsoft >= 6.18.58.1 both add netvsc_wq, and
+            # Microsoft adds netvsc_wait_for_nvsp_response() right after it.
+            # Taking --ours would drop Microsoft's netvsc rescind fixes while
+            # keeping their counterparts in rndis_filter.c and hyperv_net.h.
+            drivers/net/hyperv/netvsc.c)
+                take_superset+=("$file")
+                ;;
             *)
                 git -C "$work" status --short >&2
                 error "Unknown WSL/Linux merge conflict in $file. Leaving worktree for manual inspection."
@@ -636,7 +707,13 @@ resolve_known_conflicts() {
     done
 
     warn "Resolving known WSL port conflicts: ${conflicts[*]}"
-    git -C "$work" checkout --ours -- "${conflicts[@]}"
+    if [[ ${#take_superset[@]} -gt 0 ]]; then
+        resolve_superset_conflicts "$work" "${take_superset[@]}" \
+            || error "Could not auto-resolve WSL/Linux merge conflict in ${take_superset[*]}. Leaving worktree for manual inspection."
+    fi
+    if [[ ${#take_ours[@]} -gt 0 ]]; then
+        git -C "$work" checkout --ours -- "${take_ours[@]}"
+    fi
     ensure_dxg_entries "$work"
     git -C "$work" add "${conflicts[@]}"
 }
