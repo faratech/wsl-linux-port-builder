@@ -79,6 +79,7 @@ Run the installer regression checks without building a kernel:
 
 ```bash
 python3 tests/test-artifact-install.py
+python3 tests/test-conflict-resolution.py
 ```
 
 The login hook prefers the updater's own `--check`; if the updater is not
