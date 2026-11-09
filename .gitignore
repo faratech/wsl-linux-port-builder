@@ -5,3 +5,4 @@ out/
 *.vhdx
 *.bundle
 *.tmp
+.claude/settings.local.json
